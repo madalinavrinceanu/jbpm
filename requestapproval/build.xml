@@ -1,0 +1,102 @@
+<!--
+	Local platform independent jbpm process deploy script (deploy.sh replacement)
+	has to be copied in the folder of interest, e.g. catalog-import right next to pom.xml
+	Things to do: Check properties enclosed in xxxx-block (especially curl location, for windows it's included in git)
+	If done run with ant (included in eclipse, right-click run-as "Ant build ..").
+-->
+
+<project name="DeployToLocalJbpm" default="dist" basedir=".">
+	<description>Deploys process to local jbpm server</description>
+
+	<!-- xxxxxxxxxxxxxxx to be edited from each user xxxxxxxxxxxxxxxxxxxxxxx -->
+	<property name="wildflyStandaloneDir" value="C:\Personal\wildfly-10.1.0.Final-jbpm-Poc\wildfly-10.1.0.Final\standalone" />
+	<property name="curl" value="/Progra~1/Git/mingw64/bin/curl.exe" />
+
+
+	<!-- BASE64-Encoded user:password, here admin:admin -->
+	<property name="authToken" value="YWRtaW46YWRtaW4=" />
+	<property name="mvn.cmd" value="mvn.bat" />
+	<!-- xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx -->
+
+	<property name="bpmServerHost" value="127.0.0.1" />
+	<property name="bpmServerPort" value="8180" />
+	<property name="undeployGracePeriod" value="5" />
+	<property name="deployGracePeriod" value="15" />
+	<property name="authHeader" value="Authorization: Basic ${authToken}" />
+	<property name="deploymentUrl" value="http://${bpmServerHost}:${bpmServerPort}/jbpm-console/rest/deployment" />
+	<property name="deploymentDescriptor" value="./src/main/resources/META-INF/kie-deployment-descriptor.xml" />
+	<property name="statusFile" value="target/status" />
+	<property name="wildflyRepository" value="${wildflyStandaloneDir}/data/brms/.m2/repository" />
+
+	<!-- load maven pom to get deployment id -->
+	<xmlproperty file="pom.xml" />
+	<property name="deploymentId"
+	          value="${project.groupId}:${project.artifactId}:${project.version}" />
+
+	<target name="mvn.install">
+		<exec executable="${mvn.cmd}" dir="." failonerror="true">
+			<arg value="package" />
+			<arg value="-Dmaven.repo.local=${wildflyRepository}" />
+			<arg value="-DskipTests" />
+			<arg value="install" />
+		</exec>
+	</target>
+
+	<target name="undeploy" depends="mvn.install">
+		<exec executable="${curl}" dir="." failonerror="true">
+			<arg value="-H" />
+			<arg value="${authHeader}" />
+			<arg value="-f" />
+			<arg value="-X" />
+			<arg value="POST" />
+			<arg value="${deploymentUrl}/${deploymentId}/undeploy" />
+		</exec>
+	</target>
+
+	<target name="verify.undeploy" depends="undeploy">
+		<waitfor maxwait="${undeployGracePeriod}" maxwaitunit="second">
+			<available
+					file="${wildflyStandaloneDir}/deployments/${project.artifactId}.undeployed" />
+		</waitfor>
+	</target>
+	<target name="log.undeploy" depends="verify.undeploy">
+		<statusCheck />
+	</target>
+
+	<target name="deploy" depends="log.undeploy">
+		<exec executable="${curl}" dir="." failonerror="true">
+			<arg value="-H" />
+			<arg value="${authHeader}" />
+			<arg value="-H" />
+			<arg value="Content-Type: application/xml" />
+			<arg value="-d" />
+			<arg value="@${deploymentDescriptor}" />
+			<arg value="-f" />
+			<arg value="${deploymentUrl}/${deploymentId}/deploy" />
+		</exec>
+	</target>
+	<target name="verify.deploy" depends="deploy">
+		<waitfor maxwait="${deployGracePeriod}" maxwaitunit="second">
+			<available
+					file="${wildflyStandaloneDir}/deployments/${project.artifactId}.deployed" />
+		</waitfor>
+	</target>
+
+	<macrodef name="statusCheck">
+		<sequential>
+			<exec executable="${curl}" dir="." failonerror="true">
+				<arg value="-H" />
+				<arg value="${authHeader}" />
+				<arg value="-f" />
+				<arg value="${deploymentUrl}/${deploymentId}" />
+				<redirector output="${statusFile}" alwayslog="true" />
+			</exec>
+		</sequential>
+	</macrodef>
+
+	<target name="log.deploy" depends="verify.deploy">
+		<statusCheck />
+	</target>
+
+	<target name="dist" depends="log.deploy" />
+</project>
